@@ -19,21 +19,19 @@ jobs:
         run: |
           git clone --depth 1 --branch 17.9.5-RC-4-tor-0.4.9.11 https://github.com/guardianproject/orbot-android.git orbot
 
-      - name: Apply AntiBlock defaults and branding
+      - name: Apply AntiBlock defaults, branding and transport selector
         run: |
+          cp patches/SmartConnect.kt orbot/app/src/main/java/org/torproject/android/service/circumvention/SmartConnect.kt
           cd orbot
           python3 - <<'PY'
           from pathlib import Path
           import re
 
-          # Change only displayed app_name values; do not touch Android resource identifiers.
           for p in Path('app/src').rglob('strings.xml'):
               s = p.read_text(encoding='utf-8')
               s = re.sub(r'(<string\s+name="app_name"[^>]*>).*?(</string>)', r'\1AntiBlock\2', s)
               p.write_text(s, encoding='utf-8')
 
-          # Smart Connect is the default on a fresh install, so the engine can try
-          # circumvention transports automatically rather than requiring manual setup.
           prefs = Path('app/src/main/java/org/torproject/android/util/Prefs.kt')
           s = prefs.read_text(encoding='utf-8')
           old = 'get() = cr?.getPrefBoolean(PREF_USE_SMART_CONNECT) ?: false'
@@ -62,13 +60,13 @@ jobs:
           mkdir -p out
           APK="$(find orbot/app/build/outputs/apk -type f -name '*.apk' | grep -i fullperm | head -n1)"
           test -n "$APK"
-          cp "$APK" out/AntiBlock.apk
-          sha256sum out/AntiBlock.apk | tee out/SHA256.txt
-          ls -lh out/AntiBlock.apk
+          cp "$APK" out/AntiBlock-v2.apk
+          sha256sum out/AntiBlock-v2.apk | tee out/SHA256.txt
+          ls -lh out/AntiBlock-v2.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
-          name: AntiBlock-APK
+          name: AntiBlock-v2-APK
           path: out/
           retention-days: 30
