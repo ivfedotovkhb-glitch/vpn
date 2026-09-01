@@ -19,15 +19,28 @@ jobs:
         run: |
           git clone --depth 1 --branch 17.9.5-RC-4-tor-0.4.9.11 https://github.com/guardianproject/orbot-android.git orbot
 
-      - name: Apply AntiBlock branding
+      - name: Apply AntiBlock defaults and branding
         run: |
           cd orbot
           python3 - <<'PY'
           from pathlib import Path
+          import re
+
+          # Change only displayed app_name values; do not touch Android resource identifiers.
           for p in Path('app/src').rglob('strings.xml'):
-              s=p.read_text(encoding='utf-8')
-              s=s.replace('Orbot', 'AntiBlock')
+              s = p.read_text(encoding='utf-8')
+              s = re.sub(r'(<string\s+name="app_name"[^>]*>).*?(</string>)', r'\1AntiBlock\2', s)
               p.write_text(s, encoding='utf-8')
+
+          # Smart Connect is the default on a fresh install, so the engine can try
+          # circumvention transports automatically rather than requiring manual setup.
+          prefs = Path('app/src/main/java/org/torproject/android/util/Prefs.kt')
+          s = prefs.read_text(encoding='utf-8')
+          old = 'get() = cr?.getPrefBoolean(PREF_USE_SMART_CONNECT) ?: false'
+          new = 'get() = cr?.getPrefBoolean(PREF_USE_SMART_CONNECT) ?: true'
+          if old not in s:
+              raise SystemExit('Smart Connect default pattern not found')
+          prefs.write_text(s.replace(old, new, 1), encoding='utf-8')
           PY
 
       - name: Set up JDK 21
@@ -38,17 +51,20 @@ jobs:
           cache: gradle
           cache-dependency-path: orbot/**/*.gradle*
 
-      - name: Build APK
+      - name: Build full-permission APK
         working-directory: orbot
         run: |
           chmod +x gradlew
-          ./gradlew assembleDebug
+          ./gradlew assembleFullpermDebug
 
       - name: Collect APK
         run: |
           mkdir -p out
-          cp orbot/app/build/outputs/apk/debug/app-debug.apk out/AntiBlock.apk
+          APK="$(find orbot/app/build/outputs/apk -type f -name '*.apk' | grep -i fullperm | head -n1)"
+          test -n "$APK"
+          cp "$APK" out/AntiBlock.apk
           sha256sum out/AntiBlock.apk | tee out/SHA256.txt
+          ls -lh out/AntiBlock.apk
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
