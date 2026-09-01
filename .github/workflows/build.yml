@@ -1,0 +1,58 @@
+name: Build AntiBlock APK
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout builder repo
+        uses: actions/checkout@v4
+
+      - name: Clone Tor/Orbot source
+        run: |
+          git clone --depth 1 --branch 17.9.5-RC-4-tor-0.4.9.11 https://github.com/guardianproject/orbot-android.git orbot
+
+      - name: Apply AntiBlock branding
+        run: |
+          cd orbot
+          python3 - <<'PY'
+          from pathlib import Path
+          for p in Path('app/src').rglob('strings.xml'):
+              s=p.read_text(encoding='utf-8')
+              s=s.replace('Orbot', 'AntiBlock')
+              p.write_text(s, encoding='utf-8')
+          PY
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+          cache: gradle
+          cache-dependency-path: orbot/**/*.gradle*
+
+      - name: Build APK
+        working-directory: orbot
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug
+
+      - name: Collect APK
+        run: |
+          mkdir -p out
+          cp orbot/app/build/outputs/apk/debug/app-debug.apk out/AntiBlock.apk
+          sha256sum out/AntiBlock.apk | tee out/SHA256.txt
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: AntiBlock-APK
+          path: out/
+          retention-days: 30
