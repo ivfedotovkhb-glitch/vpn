@@ -1,0 +1,98 @@
+name: Cleanup Actions storage
+
+on:
+  push:
+    branches:
+      - maintenance/actions-storage-cleanup-20260918
+    paths:
+      - .github/workflows/cleanup-actions-storage.yml
+  workflow_dispatch:
+
+permissions:
+  actions: write
+  contents: read
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Keep newest artifact per name and delete older copies
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import urllib.request
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          token = os.environ["GITHUB_TOKEN"]
+          root = f"https://api.github.com/repos/{repo}"
+          headers = {
+              "Authorization": f"Bearer {token}",
+              "Accept": "application/vnd.github+json",
+              "X-GitHub-Api-Version": "2022-11-28",
+              "User-Agent": "actions-storage-cleanup",
+          }
+
+          def request(path, method="GET"):
+              req = urllib.request.Request(root + path, headers=headers, method=method)
+              with urllib.request.urlopen(req) as response:
+                  raw = response.read()
+                  return json.loads(raw.decode("utf-8")) if raw else None
+
+          artifacts = []
+          page = 1
+          while True:
+              data = request(f"/actions/artifacts?per_page=100&page={page}")
+              batch = data.get("artifacts", [])
+              artifacts.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+
+          artifacts.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+          newest_names = set()
+          deleted = []
+          freed = 0
+          for artifact in artifacts:
+              name = artifact.get("name") or f"artifact-{artifact['id']}"
+              if name not in newest_names:
+                  newest_names.add(name)
+                  continue
+              request(f"/actions/artifacts/{artifact['id']}", method="DELETE")
+              size = int(artifact.get("size_in_bytes") or 0)
+              freed += size
+              deleted.append((artifact["id"], name, size))
+
+          caches = []
+          page = 1
+          while True:
+              data = request(f"/actions/caches?per_page=100&page={page}")
+              batch = data.get("actions_caches", [])
+              caches.extend(batch)
+              if len(batch) < 100:
+                  break
+              page += 1
+          cache_freed = 0
+          for cache in caches:
+              request(f"/actions/caches/{cache['id']}", method="DELETE")
+              cache_freed += int(cache.get("size_in_bytes") or 0)
+
+          total_freed = freed + cache_freed
+          print(f"Artifacts found: {len(artifacts)}")
+          print(f"Artifacts kept: {len(newest_names)}")
+          print(f"Artifacts deleted: {len(deleted)}")
+          print(f"Caches deleted: {len(caches)}")
+          print(f"Approx bytes freed: {total_freed}")
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  fh.write("# Actions storage cleanup\n\n")
+                  fh.write(f"- Artifacts found: {len(artifacts)}\n")
+                  fh.write(f"- Artifacts kept (newest per name): {len(newest_names)}\n")
+                  fh.write(f"- Artifacts deleted: {len(deleted)}\n")
+                  fh.write(f"- Caches deleted: {len(caches)}\n")
+                  fh.write(f"- Approx freed: {total_freed / 1024 / 1024:.1f} MiB\n")
+          PY
