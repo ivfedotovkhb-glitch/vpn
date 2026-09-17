@@ -69,4 +69,4 @@ jobs:
         with:
           name: AntiBlock-v2-APK
           path: out/
-          retention-days: 30
+          retention-days: 3
